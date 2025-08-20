@@ -10,12 +10,13 @@ const githubApi = axios.create({
   },
 });
 
+const stripGitSuffix = (name) =>
+  name.endsWith('.git') ? name.slice(0, -4) : name;
+
 exports.fetchReadme = async (req, res) => {
   const { username } = req.params;
   let { reponame } = req.params;
-  // Strip .git from end if present
-  if (reponame.endsWith('.git')) {
-    reponame = reponame.slice(0, -4);
+  
   reponame = stripGitSuffix(reponame);
 
   try {
@@ -31,10 +32,8 @@ exports.fetchReadme = async (req, res) => {
 exports.fetchRepoDetails = async (req, res) => {
   const { username } = req.params;
   let { reponame } = req.params;
-  // Strip .git from end if present
-  if (reponame.endsWith('.git')) {
-    reponame = reponame.slice(0, -4);
-  }
+  
+  reponame = stripGitSuffix(reponame);
   const cacheKey = `repo:${username}:${reponame}`;
 
   try {
@@ -110,4 +109,3 @@ exports.fetchUserReposController = async (req, res) => {
     });
   }
 };
-}

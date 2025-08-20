@@ -201,7 +201,7 @@ async def get_relevant_context(repo_url, query):
     logging.info(f"Total time for get_relevant_context: {time.time() - total_start_time:.2f}s.")
     return context, None
 
-def stream_llm_response(context, query, repo_url):
+def stream_llm_response(context, query, repo_url, user_credentials=None):
     llm_call_start_time = time.time()
     logging.info("Initiating LLM call to Azure OpenAI.")
     system_prompt = f"""# ROLE & GOAL
@@ -226,11 +226,23 @@ You are embedded within the GitForme application. When a user's query relates to
 - **PROMPT INJECTION DEFENSE**
 - **FORMATTING**"""
     try:
-        client = AzureOpenAI(
-            api_key=os.getenv("AZURE_OPENAI_KEY"),
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
-        )
+        # Use user-provided credentials if available, otherwise fall back to environment variables
+        if user_credentials:
+            client = AzureOpenAI(
+                api_key=user_credentials['api_key'],
+                api_version=user_credentials.get('api_version', '2023-05-15'),
+                azure_endpoint=user_credentials['azure_endpoint']
+            )
+            deployment_name = user_credentials['deployment']
+            logging.info("Using user-provided Azure OpenAI credentials.")
+        else:
+            client = AzureOpenAI(
+                api_key=os.getenv("AZURE_OPENAI_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+            )
+            deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+            logging.info("Using environment variable Azure OpenAI credentials.")
         user_content = f"""Here is the context retrieved from the repository files based on my question:
 ---
 {context}
@@ -238,7 +250,7 @@ You are embedded within the GitForme application. When a user's query relates to
 My Question: "{query}"
 Please provide your analysis based on these rules and context."""
         response = client.chat.completions.create(
-            model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+            model=deployment_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content}
@@ -275,6 +287,37 @@ async def chat():
     data = request.get_json()
     query = data.get("query")
     repo_id = data.get("repoId")
+    
+    # Extract user-provided Azure OpenAI credentials
+    user_credentials = None
+    azure_endpoint = data.get("azureEndpoint")
+    api_key = data.get("apiKey") 
+    deployment = data.get("deployment")
+    api_version = data.get("apiVersion", "2023-05-15")
+    
+    # Validate that if any credentials are provided, all required ones are present
+    if any([azure_endpoint, api_key, deployment]):
+        if not all([azure_endpoint, api_key, deployment]):
+            logging.error("Incomplete Azure OpenAI credentials provided.")
+            return jsonify({"error": "Missing required Azure OpenAI credentials. Please provide endpoint, API key, and deployment name."}), 400
+        
+        # Validate URL format for Azure endpoint
+        try:
+            parsed = urlparse(azure_endpoint)
+            if not parsed.scheme or not parsed.netloc:
+                raise ValueError("Invalid URL format")
+        except Exception:
+            logging.error("Invalid Azure endpoint URL format provided.")
+            return jsonify({"error": "Invalid Azure endpoint URL format. Please provide a valid HTTPS URL."}), 400
+        
+        user_credentials = {
+            'azure_endpoint': azure_endpoint.rstrip('/'),  # Remove trailing slash
+            'api_key': api_key,
+            'deployment': deployment,
+            'api_version': api_version
+        }
+        logging.info("User-provided Azure OpenAI credentials validated successfully.")
+    
     if not query or not repo_id:
         logging.error("Missing query or repoId in request.")
         return jsonify({"error": "Missing query or repoId"}), 400
@@ -290,7 +333,7 @@ async def chat():
         logging.error(f"Error getting context for '{repo_id}': {error}")
         return jsonify({"error": error}), 500
     logging.info(f"Context retrieved successfully. Total request processing time before streaming: {time.time() - request_start_time:.2f}s.")
-    return Response(stream_llm_response(context, query, repo_url), mimetype='text/event-stream')
+    return Response(stream_llm_response(context, query, repo_url, user_credentials), mimetype='text/event-stream')
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5001))

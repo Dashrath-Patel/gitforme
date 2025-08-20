@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { atomDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useParams } from 'react-router-dom';
+import AzureCredentialsForm from './AzureCredentialsForm';
 const SendIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
 );
@@ -28,10 +29,11 @@ const CopyIcon = () => (
 
 const useChat = () => {
     const { username, reponame } = useParams();
-    const [messages, setMessages] = useState([{ sender: 'bot', text: 'Hello! I am GitBro. Ask me to summarize the repo, list dependencies, or explain a specific file.' }]);
+    const [messages, setMessages] = useState([{ sender: 'bot', text: 'Hello! I am GitBro. Ask me to summarize the repo, list dependencies, or explain a specific file.\n\n💡 **Optional**: You can provide your own Azure OpenAI credentials in the settings below for a personalized experience.' }]);
     const [input, setInput] = useState('');
     const [isStreaming, setIsStreaming] = useState(false);
     const [status, setStatus] = useState('');
+    const [azureCredentials, setAzureCredentials] = useState(null);
     const messagesEndRef = useRef(null);
 
     const scrollToBottom = () => {
@@ -50,12 +52,30 @@ const useChat = () => {
         setStatus('Thinking...');
 
         try {
+            // Prepare request payload
+            const requestPayload = { 
+                query: messageText, 
+                repoId: `${username}/${reponame}` 
+            };
+
+            // Add Azure credentials if provided
+            if (azureCredentials) {
+                requestPayload.azureEndpoint = azureCredentials.azureEndpoint;
+                requestPayload.apiKey = azureCredentials.apiKey;
+                requestPayload.deployment = azureCredentials.deployment;
+                requestPayload.apiVersion = azureCredentials.apiVersion;
+                setStatus('Using your Azure OpenAI credentials...');
+            }
+
             const response = await fetch('https://gitforme-bot.onrender.com/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: messageText, repoId: `${username}/${reponame}` }),
+                body: JSON.stringify(requestPayload),
             });
-            if (!response.ok) throw new Error("API request failed");
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+            }
             
             const reader = response.body.getReader();
             const decoder = new TextDecoder('utf-8');
@@ -92,7 +112,17 @@ const useChat = () => {
         }
     };
 
-    return { messages, input, setInput, handleSendMessage, isStreaming, status, messagesEndRef };
+    return { 
+        messages, 
+        input, 
+        setInput, 
+        handleSendMessage, 
+        isStreaming, 
+        status, 
+        messagesEndRef,
+        azureCredentials,
+        setAzureCredentials 
+    };
 };
 
 
@@ -313,6 +343,15 @@ const ChatbotPanel = ({ onClose }) => {
         >
             <div onMouseDown={handleMouseDown} className="absolute top-0 left-[-4px] w-2 h-full cursor-col-resize z-50" />
             <ChatHeader onClose={onClose} onMinimize={handleMinimize} />
+            
+            {/* Azure Credentials Form */}
+            <div className="px-4 pt-4 pb-2 border-b-2 border-black bg-[#FEF9F2]">
+                <AzureCredentialsForm 
+                    onCredentialsChange={chatLogic.setAzureCredentials}
+                    initialCredentials={chatLogic.azureCredentials}
+                />
+            </div>
+            
             <MessageList {...chatLogic} />
             <ChatInput {...chatLogic} onSendMessage={chatLogic.handleSendMessage} />
         </motion.div>
